@@ -1,43 +1,88 @@
 import csv
 import sys
 import logging
+from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict
 
-# Configure logging
+
+INVENTORY_TITLE = 'INVENTORY SUMMARY'
+LINE_WIDTH = 80
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-def parse_csv(file_path: Optional[Path] = None) -> None:
+
+def parse_csv(file_path: Optional[Path] = None) -> Dict[str, Dict[str, Dict[str, float]]]:
     """
-    Parses a CSV file and logs each row.
+    Parse an inventory CSV file into a nested dictionary.
 
     Args:
-        file_path (Optional[Path]): Path to the CSV file. Defaults to './example_file/example.csv'.
+        file_path (Optional[Path]): Path to the CSV file.
 
-    Raises:
-        SystemExit: If there is an error reading the CSV file.
+    Returns:
+        dict: Nested structure {CATEGORY -> {PRODUCT -> {UNIT_TYPE -> QUANTITY}}}
     """
     file_path = file_path or Path('./example_file/example.csv')
 
     if not file_path.is_file():
-        logging.error(f"File not found: {file_path}")
+        logging.critical(f"File not found: {file_path}")
         sys.exit(1)
 
+    inventory = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
+
     try:
-        with file_path.open(newline='', encoding='utf-8') as f:
-            reader = csv.reader(f, delimiter=';')
+        with file_path.open(newline='', encoding='utf-8') as file:
+            reader = csv.DictReader(file, delimiter=';')
+
+            expected_fields = {'CATEGORY', 'PRODUCT', 'QUANTITY', 'UNIT_TYPE'}
+            if set(reader.fieldnames or []) != expected_fields:
+                raise ValueError(
+                    f'Invalid CSV header. Expected fields: {", ".join(expected_fields)}'
+                )
+
             for row in reader:
-                logging.info(f"Row: {row}")
-    except csv.Error as e:
-        logging.critical(f"Error reading file {file_path}, line {reader.line_num}: {e}")
+                try:
+                    category = row['CATEGORY'].strip().title()
+                    product = row['PRODUCT'].strip().title()
+                    unit = row['UNIT_TYPE'].strip().lower()
+                    quantity = float(row['QUANTITY'].replace(',', '.'))
+
+                    inventory[category][product][unit] += quantity
+
+                except (ValueError, KeyError) as e:
+                    logging.warning(f"Skipping invalid row {row}: {e}")
+
+    except (csv.Error, IOError) as e:
+        logging.critical(f"Failed reading CSV file '{file_path}': {e}")
         sys.exit(1)
-    except Exception as e:
-        logging.critical(f"Unexpected error: {e}")
-        sys.exit(1)
+
+    return inventory
+
+
+def print_inventory(inventory: Dict[str, Dict[str, Dict[str, float]]]) -> None:
+    """
+    Prints the inventory in a structured format.
+    """
+    separator = '=' * LINE_WIDTH
+    print(separator)
+    print(INVENTORY_TITLE.center(LINE_WIDTH))
+    print(separator)
+
+    for category, products in sorted(inventory.items()):
+        print(f"\n{category.upper()}")
+        print('-' * LINE_WIDTH)
+
+        for product, units in sorted(products.items()):
+            for unit, quantity in sorted(units.items()):
+                unit_display = unit + ('s' if not unit.endswith('s') else '')
+                print(f"{product.lower():<30} {quantity:>8.0f} {unit_display}")
+
+    print('\n' + separator)
 
 
 if __name__ == '__main__':
-    parse_csv()
+    csv_data = parse_csv()
+    print_inventory(csv_data)
